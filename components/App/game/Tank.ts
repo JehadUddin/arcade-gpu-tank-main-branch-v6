@@ -146,34 +146,48 @@ export class Tank {
     this.grenadeRecoil -= (ts / 1000) * 1.5;
     if (this.grenadeRecoil < 0) this.grenadeRecoil = 0;
     
-    // 1. TANK MOVEMENT LOGIC (Classic Tank Controls)
+    // 1. TANK MOVEMENT LOGIC (Camera-Relative Twin-Stick)
     const TANK_MAX_SPEED = 18.0;
-    const MAX_ROT_VEL = 3.5;
+    const MAX_ROT_VEL = 5.0; // Slightly faster to feel responsive
     
-    // W/S corresponds to moveDir.y (Throttle)
-    // A/D corresponds to moveDir.x (Steering)
-    const throttle = moveDir.y; 
-    const steer = -moveDir.x; // Flip steer to make D = Right turn
+    const inputMag = Math.sqrt(moveDir.x * moveDir.x + moveDir.y * moveDir.y);
+    const isMoving = inputMag > 0.05;
 
-    if (Math.abs(throttle) > 0.05 || Math.abs(steer) > 0.05) {
-        // Rotation (Independent of camera direction)
-        // High rotation speed at low speed, wider turns at high speed
-        const turnAuthority = 1.0 - (Math.abs(this.speed) / TANK_MAX_SPEED * 0.4);
-        const targetRotVel = steer * MAX_ROT_VEL * turnAuthority;
-        this.rotVel = UT.LERP(this.rotVel, targetRotVel, 1.0 - Math.exp(-10.0 * (ts / 1000)));
+    if (isMoving) {
+        // Find desired world movement vector based on Camera (aimYaw)
+        const cameraQuat = Quaternion.createFromEuler(aimYaw, 0, 0, 'YXZ');
+        // W/S corresponds to moveDir.y (W = +1, S = -1 -> mapped to locally forward -Z)
+        // A/D corresponds to moveDir.x (D = +1 -> mapped to locally right +X)
+        const inputVec: vec3 = [moveDir.x, 0, -moveDir.y]; 
+        const worldMoveVec = cameraQuat.rotateVector(inputVec);
+        
+        const desiredYaw = Math.atan2(-worldMoveVec[0], -worldMoveVec[2]);
+        
+        let yawDiff = ((desiredYaw - this.rotation) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+        if (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
+        
+        const maxTurnStep = MAX_ROT_VEL * (ts / 1000);
+        // Turn towards desired angle
+        if (Math.abs(yawDiff) < maxTurnStep) {
+            this.rotation = desiredYaw;
+        } else {
+            this.rotation += Math.sign(yawDiff) * maxTurnStep;
+        }
 
-        // Throttle (Relative to current chassis orientation)
-        const targetSpeed = throttle * TANK_MAX_SPEED;
-        const isBraking = (targetSpeed > 0 && this.speed < -0.1) || (targetSpeed < 0 && this.speed > 0.1);
-        const accelAlpha = isBraking ? 12.0 : 6.0; 
-        this.speed = UT.LERP(this.speed, targetSpeed, 1.0 - Math.exp(-accelAlpha * (ts / 1000)));
+        // Throttle always drives "forward" relative to the hull's current orientation
+        const targetSpeed = Math.min(inputMag, 1.0) * TANK_MAX_SPEED;
+        
+        // If the hull is mostly facing the desired direction, accelerate. 
+        // If it's performing a sharp U-turn, slow down to rotate tighter.
+        const alignmentPenalty = Math.max(0, 1.0 - Math.abs(yawDiff) / (Math.PI / 1.5));
+        
+        const accelAlpha = 8.0; 
+        this.speed = UT.LERP(this.speed, targetSpeed * alignmentPenalty, 1.0 - Math.exp(-accelAlpha * (ts / 1000)));
     } else {
-        // Braking and stopping rotation
-        this.speed = UT.LERP(this.speed, 0, 1.0 - Math.exp(-6.0 * (ts / 1000)));
-        this.rotVel = UT.LERP(this.rotVel, 0, 1.0 - Math.exp(-15.0 * (ts / 1000)));
+        // Braking
+        this.speed = UT.LERP(this.speed, 0, 1.0 - Math.exp(-8.0 * (ts / 1000)));
     }
 
-    this.rotation += this.rotVel * (ts / 1000);
     this.rotation = UT.CLAMP_ANGLE(this.rotation);
 
     // 2. JOLT PHYSICS SYNC
