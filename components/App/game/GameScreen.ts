@@ -97,6 +97,8 @@ export class GameScreen extends Screen {
   shakeIntensity: number = 0;
   lastMouseManualTS: number = 0;
 
+  cameraAnchor: vec3 = [0, 0, 0];
+
   constructor() {
     super();
     this.camera = new Gfx3Camera(0);
@@ -151,15 +153,11 @@ export class GameScreen extends Screen {
   };
 
   handleMouseDown = (e: MouseEvent) => {
-    if (e.button === 0 && inputManager.isPointerLockCaptured()) { // Left Click (Normal Shell)
-        this.isSniperMode = true;
-    }
+    // Left click just fires, no sniper zoom to avoid camera leaps
   };
 
   handleMouseUp = (e: MouseEvent) => {
-    if (e.button === 0) {
-        this.isSniperMode = false;
-    }
+    // Empty
   };
 
   async onEnter() {
@@ -369,6 +367,10 @@ export class GameScreen extends Screen {
     // We use a dedicated shoulder offset and smoothed look-at system
     const rotQ = Quaternion.createFromEuler(this.cameraYaw, this.cameraPitch, 0, 'YXZ');
     
+    // Smooth the base anchor instead of the final position to avoid mouse look latency
+    const camAlpha = 1.0 - Math.exp(-12.0 * (ts / 1000)); 
+    this.cameraAnchor = UT.VEC3_LERP(this.cameraAnchor || playerPos, playerPos, camAlpha);
+
     // 1. Calculate the ideal eye position
     // Base distance behind, but offset to the side for "Shoulder" feel
     const sideOffset = this.isSniperMode ? 0.8 : 1.5;
@@ -379,22 +381,21 @@ export class GameScreen extends Screen {
     const viewRight = rotQ.rotateVector([sideOffset, 0, 0]);
     
     const idealPos: vec3 = [
-        playerPos[0] + viewBack[0] + viewRight[0],
-        playerPos[1] + viewBack[1] + heightOffset,
-        playerPos[2] + viewBack[2] + viewRight[2]
+        this.cameraAnchor[0] + viewBack[0] + viewRight[0],
+        this.cameraAnchor[1] + viewBack[1] + heightOffset,
+        this.cameraAnchor[2] + viewBack[2] + viewRight[2]
     ];
     
     // 2. Terrain clipping prevention (Floor floor)
     // Scale height floor based on pitch to avoid cutting through slopes
     const pitchFactor = Math.max(0, this.cameraPitch);
-    const minHeight = playerPos[1] + 1.2 + (pitchFactor * 1.5);
+    const minHeight = this.cameraAnchor[1] + 1.2 + (pitchFactor * 1.5);
     if (idealPos[1] < minHeight) {
         idealPos[1] = minHeight;
     }
     
-    // 3. Position Smoothing (Chase LERP)
-    const camAlpha = 1.0 - Math.exp(-12.0 * (ts / 1000)); 
-    this.cameraPos = UT.VEC3_LERP(this.cameraPos, idealPos, camAlpha);
+    // 3. Position Smoothing
+    this.cameraPos = idealPos;
     
     const shakeX = (Math.random() - 0.5) * this.shakeIntensity;
     const shakeY = (Math.random() - 0.5) * this.shakeIntensity;
@@ -407,12 +408,12 @@ export class GameScreen extends Screen {
     const lookRight = rotQ.rotateVector([sideOffset * 0.5, 0,-1]);
     const viewForward = rotQ.rotateVector([0, 0, -1]);
     const targetLook: vec3 = [
-        playerPos[0] + lookRight[0] + viewForward[0] * 100.0,
-        playerPos[1] + 1.2 + viewForward[1] * 100.0,
-        playerPos[2] + lookRight[2] + viewForward[2] * 100.0
+        this.cameraAnchor[0] + lookRight[0] + viewForward[0] * 100.0,
+        this.cameraAnchor[1] + 1.2 + viewForward[1] * 100.0,
+        this.cameraAnchor[2] + lookRight[2] + viewForward[2] * 100.0
     ];
     
-    this.cameraLookTarget = UT.VEC3_LERP(this.cameraLookTarget, targetLook, 1.0 - Math.exp(-18.0 * (ts / 1000)));
+    this.cameraLookTarget = targetLook;
     this.camera.lookAt(this.cameraLookTarget[0] + shakeX, this.cameraLookTarget[1] + shakeY, this.cameraLookTarget[2] + shakeZ);
     
     this.shakeIntensity = UT.LERP(this.shakeIntensity, 0, 5.0 * (ts / 1000));
@@ -550,10 +551,10 @@ export class GameScreen extends Screen {
         continue;
       }
       
-      if (p.life < 4.98) { // Solid trail
+      if (p.life < 4.98 && Math.random() < 0.25) { // Solid trail, throttled
           const exp = this.explosionPool.acquire() as Explosion;
           if (exp) {
-              const trailColor = [1.0, 1.0, 0.0] as [number, number, number];
+              const trailColor = p.type === ProjectileType.GRENADE ? [0.4, 0.4, 0.4] as [number, number, number] : [1.0, 1.0, 0.0] as [number, number, number];
               const trailScale = p.type === ProjectileType.GRENADE ? 1.5 : 0.6;
               const pVel = [curV.GetX(), curV.GetY(), curV.GetZ()] as vec3;
               exp.reset(pPos3[0], pPos3[1], pPos3[2], trailColor, pVel, trailScale, 'trail');
