@@ -178,51 +178,56 @@ export class Tank {
 
     // 2. JOLT PHYSICS SYNC
     gfx3JoltManager.bodyInterface.ActivateBody(this.physicsBody.body.GetID());
-
     const pos = this.physicsBody.body.GetPosition();
-    // Start raycast just below the tank's collision box to avoid hitting itself
+    
+    const dt = ts / 1000;
+    
+    const qPhysics = this.physicsBody.body.GetRotation();
+    const currentQuat = new Quaternion(qPhysics.GetW(), qPhysics.GetX(), qPhysics.GetY(), qPhysics.GetZ());
+    const currentForward = currentQuat.rotateVector([0, 0, -1]);
+    const currentYaw = Math.atan2(-currentForward[0], -currentForward[2]);
+
+    let physYawDiff = ((this.rotation - currentYaw) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+    if (physYawDiff > Math.PI) physYawDiff -= Math.PI * 2;
+    
+    const targetAngVelY = physYawDiff * 15.0; 
+    const currentAngVel = this.physicsBody.body.GetAngularVelocity();
+    const newAngY = UT.LERP(currentAngVel.GetY(), targetAngVelY, 1.0 - Math.exp(-15.0 * dt));
+
+    // Align to ground normal using raycast
     const rayStart = [pos.GetX(), pos.GetY() - 0.55, pos.GetZ()];
     const rayEnd = [pos.GetX(), pos.GetY() - 3.5, pos.GetZ()];
-    
     const rayHit = gfx3JoltManager.createRay(rayStart[0], rayStart[1], rayStart[2], rayEnd[0], rayEnd[1], rayEnd[2]);
-    let groundNormal: vec3 = [0, 1, 0];
     
+    let groundNormal: vec3 = [0, 1, 0];
     if (rayHit.body && rayHit.normal) {
         groundNormal = [rayHit.normal.GetX(), rayHit.normal.GetY(), rayHit.normal.GetZ()];
     }
 
-    // Smoothly align the tank's UP to the ground normal
-    this.currentNormal[0] = UT.LERP(this.currentNormal[0], groundNormal[0], 10.0 * (ts / 1000));
-    this.currentNormal[1] = UT.LERP(this.currentNormal[1], groundNormal[1], 10.0 * (ts / 1000));
-    this.currentNormal[2] = UT.LERP(this.currentNormal[2], groundNormal[2], 10.0 * (ts / 1000));
+    this.currentNormal[0] = UT.LERP(this.currentNormal[0], groundNormal[0], 10.0 * dt);
+    this.currentNormal[1] = UT.LERP(this.currentNormal[1], groundNormal[1], 10.0 * dt);
+    this.currentNormal[2] = UT.LERP(this.currentNormal[2], groundNormal[2], 10.0 * dt);
     this.currentNormal = UT.VEC3_NORMALIZE(this.currentNormal);
 
-    // Calculate the orientation from Yaw + Ground Normal
-    // 1. Create a quat for the arcade yaw
-    const yawQ = Quaternion.createFromEuler(this.rotation, 0, 0, 'YXZ');
+    // Apply angular velocity to align Up vector with Ground Normal
+    const currentUpVec = currentQuat.rotateVector([0, 1, 0]);
+    const crossRighting = UT.VEC3_CROSS(currentUpVec, this.currentNormal);
+    const rightingStrength = 10.0;
     
-    // 2. Align local UP ([0, 1, 0]) to currentNormal
-    const upAlignmentQ = Quaternion.createFromBetweenVectors([0, 1, 0], this.currentNormal);
-    
-    // 3. Combine them: Apply Yaw first, then align to surface
-    const targetQuat = upAlignmentQ.mul(yawQ.w, yawQ.x, yawQ.y, yawQ.z);
-    
-    const joltQuatSet = new Gfx3Jolt.Quat(targetQuat.x, targetQuat.y, targetQuat.z, targetQuat.w);
-    gfx3JoltManager.bodyInterface.SetRotation(this.physicsBody.body.GetID(), joltQuatSet, Gfx3Jolt.EActivation_Activate);
+    const newAngX = currentAngVel.GetX() * 0.6 + crossRighting[0] * rightingStrength;
+    const newAngZ = currentAngVel.GetZ() * 0.6 + crossRighting[2] * rightingStrength;
 
-    // Precise Velocity
-    const forward = targetQuat.rotateVector([0, 0, -1]);
-    const currentJoltVel = this.physicsBody.body.GetLinearVelocity();
-    
-    const newVelX = forward[0] * this.speed;
-    const newVelZ = forward[2] * this.speed;
-    
-    // Keep internal physics Y velocity but dampen vertical separation
-    const newVelY = currentJoltVel.GetY();
+    gfx3JoltManager.bodyInterface.SetAngularVelocity(
+        this.physicsBody.body.GetID(),
+        new Gfx3Jolt.Vec3(newAngX, newAngY, newAngZ)
+    );
 
+    const moveDirBase = currentQuat.rotateVector([0, 0, -1]);
+    const currentVel = this.physicsBody.body.GetLinearVelocity();
+    
     gfx3JoltManager.bodyInterface.SetLinearVelocity(
-        this.physicsBody.body.GetID(), 
-        new Gfx3Jolt.Vec3(newVelX, newVelY, newVelZ)
+        this.physicsBody.body.GetID(),
+        new Gfx3Jolt.Vec3(moveDirBase[0] * this.speed, currentVel.GetY(), moveDirBase[2] * this.speed)
     );
     
     // 3. CHASSIS TILT (Acceleration-based lurch)
@@ -250,12 +255,12 @@ export class Tank {
     const tiltQ = Quaternion.createFromEuler(0, finalTilt, 0, 'YXZ');
     
     // Final body orientation with tilt and lurch
-    const finalVisualQ = targetQuat.mul(tiltQ.w, tiltQ.x, tiltQ.y, tiltQ.z);
+    const finalVisualQ = currentQuat.mul(tiltQ.w, tiltQ.x, tiltQ.y, tiltQ.z);
 
     const recoiledOrigin: vec3 = [
-        origin[0] + forward[0] * bodyRecoilOffset,
+        origin[0] + moveDirBase[0] * bodyRecoilOffset,
         origin[1],
-        origin[2] + forward[2] * bodyRecoilOffset
+        origin[2] + moveDirBase[2] * bodyRecoilOffset
     ];
 
     const bodyMatrix = UT.MAT4_TRANSFORM(recoiledOrigin, [0, 0, 0], [1, 1, 1], finalVisualQ);
