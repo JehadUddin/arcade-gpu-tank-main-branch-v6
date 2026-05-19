@@ -180,8 +180,9 @@ export class Tank {
     gfx3JoltManager.bodyInterface.ActivateBody(this.physicsBody.body.GetID());
 
     const pos = this.physicsBody.body.GetPosition();
-    const rayStart = [pos.GetX(), pos.GetY() + 0.5, pos.GetZ()];
-    const rayEnd = [pos.GetX(), pos.GetY() - 2.5, pos.GetZ()];
+    // Start raycast just below the tank's collision box to avoid hitting itself
+    const rayStart = [pos.GetX(), pos.GetY() - 0.55, pos.GetZ()];
+    const rayEnd = [pos.GetX(), pos.GetY() - 3.5, pos.GetZ()];
     
     const rayHit = gfx3JoltManager.createRay(rayStart[0], rayStart[1], rayStart[2], rayEnd[0], rayEnd[1], rayEnd[2]);
     let groundNormal: vec3 = [0, 1, 0];
@@ -275,8 +276,15 @@ export class Tank {
     let yawDiff = ((aimYaw - this.turretYaw) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
     if (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
     
-    const turretTraverseSpeed = 25.0;
-    this.turretYaw += yawDiff * turretTraverseSpeed * (ts / 1000);
+    // Prevent oscillation by checking step size
+    const turretTraverseSpeed = 2.5; 
+    const traverseStep = turretTraverseSpeed * (ts / 1000);
+    
+    if (Math.abs(yawDiff) < traverseStep) {
+        this.turretYaw = aimYaw;
+    } else {
+        this.turretYaw += Math.sign(yawDiff) * traverseStep;
+    }
     
     const localYaw = (this.turretYaw - this.rotation);
     const localYawQ = Quaternion.createFromEuler(localYaw, 0, 0, 'YXZ');
