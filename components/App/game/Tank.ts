@@ -146,47 +146,38 @@ export class Tank {
     this.grenadeRecoil -= (ts / 1000) * 1.5;
     if (this.grenadeRecoil < 0) this.grenadeRecoil = 0;
     
-    // 1. TANK MOVEMENT LOGIC (Camera-Relative Twin-Stick)
+    // 1. TANK MOVEMENT LOGIC (Turret-Aligned Controls)
     const TANK_MAX_SPEED = 18.0;
-    const MAX_ROT_VEL = 5.0; // Slightly faster to feel responsive
+    const MAX_ROT_VEL = 8.0; // Responsive rotation towards crosshair
+    
+    // Always smoothly track the camera/mouse direction with the chassis
+    const desiredYaw = aimYaw;
+    let chassisYawDiff = ((desiredYaw - this.rotation) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+    if (chassisYawDiff > Math.PI) chassisYawDiff -= Math.PI * 2;
+    
+    const maxTurnStep = MAX_ROT_VEL * (ts / 1000);
+    if (Math.abs(chassisYawDiff) < maxTurnStep) {
+        this.rotation = desiredYaw;
+    } else {
+        this.rotation += Math.sign(chassisYawDiff) * maxTurnStep;
+    }
     
     const inputMag = Math.sqrt(moveDir.x * moveDir.x + moveDir.y * moveDir.y);
     const isMoving = inputMag > 0.05;
 
     if (isMoving) {
-        // Find desired world movement vector based on Camera (aimYaw)
-        const cameraQuat = Quaternion.createFromEuler(aimYaw, 0, 0, 'YXZ');
-        // W/S corresponds to moveDir.y (W = +1, S = -1 -> mapped to locally forward -Z)
-        // A/D corresponds to moveDir.x (D = +1 -> mapped to locally right +X)
-        const inputVec: vec3 = [moveDir.x, 0, -moveDir.y]; 
-        const worldMoveVec = cameraQuat.rotateVector(inputVec);
-        
-        const desiredYaw = Math.atan2(-worldMoveVec[0], -worldMoveVec[2]);
-        
-        let yawDiff = ((desiredYaw - this.rotation) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
-        if (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
-        
-        const maxTurnStep = MAX_ROT_VEL * (ts / 1000);
-        // Turn towards desired angle
-        if (Math.abs(yawDiff) < maxTurnStep) {
-            this.rotation = desiredYaw;
-        } else {
-            this.rotation += Math.sign(yawDiff) * maxTurnStep;
-        }
-
-        // Throttle always drives "forward" relative to the hull's current orientation
         const targetSpeed = Math.min(inputMag, 1.0) * TANK_MAX_SPEED;
-        
-        // If the hull is mostly facing the desired direction, accelerate. 
-        // If it's performing a sharp U-turn, slow down to rotate tighter.
-        const alignmentPenalty = Math.max(0, 1.0 - Math.abs(yawDiff) / (Math.PI / 1.5));
-        
         const accelAlpha = 8.0; 
-        this.speed = UT.LERP(this.speed, targetSpeed * alignmentPenalty, 1.0 - Math.exp(-accelAlpha * (ts / 1000)));
+        this.speed = UT.LERP(this.speed, targetSpeed, 1.0 - Math.exp(-accelAlpha * (ts / 1000)));
     } else {
         // Braking
-        this.speed = UT.LERP(this.speed, 0, 1.0 - Math.exp(-8.0 * (ts / 1000)));
+        this.speed = UT.LERP(this.speed, 0, 1.0 - Math.exp(-12.0 * (ts / 1000)));
     }
+    
+    // Create movement vector based on WASD using the turret/camera frame of reference
+    const cameraQuat = Quaternion.createFromEuler(aimYaw, 0, 0, 'YXZ');
+    const inputVec: vec3 = [moveDir.x, 0, -moveDir.y]; 
+    const worldMoveVec = cameraQuat.rotateVector(inputVec);
 
     this.rotation = UT.CLAMP_ANGLE(this.rotation);
 
@@ -218,7 +209,8 @@ export class Tank {
     const joltQuatSet = new Gfx3Jolt.Quat(targetQuat.x, targetQuat.y, targetQuat.z, targetQuat.w);
     gfx3JoltManager.bodyInterface.SetRotation(this.physicsBody.body.GetID(), joltQuatSet, Gfx3Jolt.EActivation_Activate);
 
-    const moveDirBase = targetQuat.rotateVector([0, 0, -1]);
+    // Apply movement logic (worldMoveVec aligned to the terrain normal)
+    const moveDirBase = upAlignmentQ.rotateVector(worldMoveVec);
     const currentVel = this.physicsBody.body.GetLinearVelocity();
     
     gfx3JoltManager.bodyInterface.SetLinearVelocity(
