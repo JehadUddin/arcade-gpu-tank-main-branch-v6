@@ -261,14 +261,14 @@ export class GameScreen extends Screen {
     const tankP = this.tank.physicsBody.body.GetPosition();
     const playerPos: vec3 = [tankP.GetX(), tankP.GetY(), tankP.GetZ()];
     const rotQ = Quaternion.createFromEuler(this.cameraYaw, this.cameraPitch, 0, 'YXZ');
-    const sideOffset = this.isSniperMode ? 0.8 : 1.5;
-    const lookRight = rotQ.rotateVector([sideOffset * 0.5, 0, -1]);
     const viewForward = rotQ.rotateVector([0, 0, -1]);
     
+    // Project ray purely from the camera
+    const camPos = this.cameraPos || [playerPos[0], playerPos[1] + 2.5, playerPos[2] + 4.5];
     const targetLook: vec3 = [
-        playerPos[0] + lookRight[0] + viewForward[0] * 100.0,
-        playerPos[1] + 1.2 + viewForward[1] * 100.0,
-        playerPos[2] + lookRight[2] + viewForward[2] * 100.0
+        camPos[0] + viewForward[0] * 500.0,
+        camPos[1] + viewForward[1] * 500.0,
+        camPos[2] + viewForward[2] * 500.0
     ];
 
     const turretPos: vec3 = [playerPos[0], playerPos[1] + 0.9, playerPos[2]];
@@ -404,13 +404,11 @@ export class GameScreen extends Screen {
     this.camera.setPosition(this.cameraPos[0] + shakeX, this.cameraPos[1] + shakeY, this.cameraPos[2] + shakeZ);
     
     // 4. Update the Look-At Target
-    // Focus slightly to the side of the tank to maintain the shoulder composition
-    const lookRight = rotQ.rotateVector([sideOffset * 0.5, 0,-1]);
     const viewForward = rotQ.rotateVector([0, 0, -1]);
     const targetLook: vec3 = [
-        this.cameraAnchor[0] + lookRight[0] + viewForward[0] * 100.0,
-        this.cameraAnchor[1] + 1.2 + viewForward[1] * 100.0,
-        this.cameraAnchor[2] + lookRight[2] + viewForward[2] * 100.0
+        this.cameraPos[0] + viewForward[0] * 100.0,
+        this.cameraPos[1] + viewForward[1] * 100.0,
+        this.cameraPos[2] + viewForward[2] * 100.0
     ];
     
     this.cameraLookTarget = targetLook;
